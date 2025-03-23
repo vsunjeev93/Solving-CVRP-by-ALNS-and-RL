@@ -64,7 +64,7 @@ class RepairUtils:
 class GreedyRepair(RepairUtils):
     """Inserts customers at position with minimum insertion cost."""
     
-    def insert_customers(self, state: VRPData) -> VRPData:
+    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]]]:
         """
         Insert all customers using greedy approach.
         
@@ -77,6 +77,8 @@ class GreedyRepair(RepairUtils):
         Returns:
             Updated state with all customers assigned
         """
+        new_edges=[[],[]]
+        deleted_edges=[[],[]]
         while len(state.unassigned_customers) > 0:
             current_customer = state.unassigned_customers[0]
             _, route_id, index, _ = self.get_min_insertion_cost(state, current_customer)
@@ -87,16 +89,19 @@ class GreedyRepair(RepairUtils):
             else:
                 # Insert at best position
                 state.routes[route_id] = state.routes[route_id][:index] + [current_customer] + state.routes[route_id][index:]
-            
+                new_edges[0]=new_edges[0]+[state.routes[route_id][index-1],current_customer,state.routes[route_id][index],current_customer]
+                new_edges[1]=new_edges[1]+[current_customer,state.routes[route_id][index-1],current_customer,state.routes[route_id][index]]
+                deleted_edges[0]=deleted_edges[0]+[state.routes[route_id][index-1],state.routes[route_id][index]]
+                deleted_edges[1]=deleted_edges[1]+[state.routes[route_id][index],state.routes[route_id][index-1]]
             state.unassigned_customers.pop(0)
         
-        return state
+        return state, new_edges,deleted_edges
 
 
 class SortedGreedyRepair(GreedyRepair):
     """Sorts customers by insertion cost before inserting."""
     
-    def insert_customers(self, state: VRPData) -> VRPData:
+    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]]]:
         """
         Sort customers by insertion cost, then insert.
         
@@ -127,7 +132,7 @@ class RegretkRepair(GreedyRepair):
         """Initialize with regret parameter k."""
         self.k = k
         
-    def insert_customers(self, state: VRPData) -> VRPData:
+    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]]]:
         """
         Calculate regret scores, sort customers (highest first), then insert.
         

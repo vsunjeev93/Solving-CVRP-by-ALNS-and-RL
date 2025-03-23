@@ -28,7 +28,7 @@ class VRPData:
         self.distance_matrix = self.compute_distance_matrix()
         self.nearest_neighbors = np.argsort(self.distance_matrix, axis=1)
         self.nearest_demands = self.compute_demand_similarity()
-        self.nearest_neighbors_by_route = self.compute_route_similarity()
+        
         if not cost:
             self.cost = self.compute_cost()
 
@@ -144,15 +144,15 @@ class VRPData:
                     improvement[node] = current_cost - new_cost  # Positive means removal improves solution
         return np.argsort(-improvement)  # Sort descending so best improvements come first
 
-    def update_route(self, new_route: List[List[int]]) -> None:
+    def update_cost(self) -> None:
         """
         Update the current solution with a new route and recompute cost.
         
         Args:
             new_route: List[List[int]] - New route to replace current solution
         """
-        self.route = new_route
         self.cost = self.compute_cost()
+        return self.cost
         
 
 

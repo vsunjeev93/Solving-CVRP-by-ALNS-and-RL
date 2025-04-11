@@ -1,0 +1,7 @@
+destroy_distribution: {RandomRemoval: 0.2984333336353302, DemandRelatedRemoval: 0.2095833271741867,
+  GeographicRelatedRemoval: 0.1404833346605301, RouteRelatedRemoval: 0.248566672205925,
+  GreedyRemoval: 0.10293333232402802}
+repair_distribution: {GreedyRepair: 0.13950000703334808, SortedGreedyRepair: 0.2846333384513855,
+  RegretkRepair(k=2): 0.35503333806991577, RegretkRepair(k=3): 0.22083333134651184}
+total_destroy_actions: 60000.0
+total_repair_actions: 60000.0

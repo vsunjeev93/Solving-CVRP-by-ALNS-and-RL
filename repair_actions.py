@@ -48,6 +48,8 @@ class RepairUtils:
                 for node_index in range(1, len(route)):
                     prev_node = route[node_index-1]
                     next_node = route[node_index]
+                    if node==prev_node or node==next_node:
+                        raise Exception(node,prev_node,next_node)
                     cost = self.insertion_cost(state, node, prev_node, next_node)
                     candidates_cost_info.append((cost, i, node_index))
                     if cost < min_cost:
@@ -64,7 +66,7 @@ class RepairUtils:
 class GreedyRepair(RepairUtils):
     """Inserts customers at position with minimum insertion cost."""
     
-    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]]]:
+    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]],float]:
         """
         Insert all customers using greedy approach.
         
@@ -77,31 +79,34 @@ class GreedyRepair(RepairUtils):
         Returns:
             Updated state with all customers assigned
         """
-        new_edges=[[],[]]
-        deleted_edges=[[],[]]
+        cost_change=0
         while len(state.unassigned_customers) > 0:
             current_customer = state.unassigned_customers[0]
+            # print(state.unassigned_customers,state.routes)
             _, route_id, index, _ = self.get_min_insertion_cost(state, current_customer)
             
             if route_id == len(state.routes):
                 # Create new route
                 state.routes.append([0, current_customer, 0])
+                cost_change+=state.distance_matrix[0,current_customer]*2
             else:
                 # Insert at best position
+                cost_change+=state.distance_matrix[current_customer,state.routes[route_id][index-1]]+state.distance_matrix[current_customer,state.routes[route_id][index]]
+                cost_change-=state.distance_matrix[state.routes[route_id][index],state.routes[route_id][index-1]]
+                if state.distance_matrix[current_customer,state.routes[route_id][index-1]]+state.distance_matrix[current_customer,state.routes[route_id][index]]==float('inf') or state.distance_matrix[current_customer,state.routes[route_id][index-1]]+state.distance_matrix[current_customer,state.routes[route_id][index]] == -float('inf'):
+                    raise Exception(f'cost is inf {state.routes[route_id][index-1]} {state.routes[route_id][index]} {current_customer} {state.routes[route_id]} ',state.distance_matrix)
                 state.routes[route_id] = state.routes[route_id][:index] + [current_customer] + state.routes[route_id][index:]
-                new_edges[0]=new_edges[0]+[state.routes[route_id][index-1],current_customer,state.routes[route_id][index],current_customer]
-                new_edges[1]=new_edges[1]+[current_customer,state.routes[route_id][index-1],current_customer,state.routes[route_id][index]]
-                deleted_edges[0]=deleted_edges[0]+[state.routes[route_id][index-1],state.routes[route_id][index]]
-                deleted_edges[1]=deleted_edges[1]+[state.routes[route_id][index],state.routes[route_id][index-1]]
+                
+                
             state.unassigned_customers.pop(0)
         
-        return state, new_edges,deleted_edges
+        return state,cost_change
 
 
 class SortedGreedyRepair(GreedyRepair):
     """Sorts customers by insertion cost before inserting."""
     
-    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]]]:
+    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]],float]:
         """
         Sort customers by insertion cost, then insert.
         
@@ -132,7 +137,7 @@ class RegretkRepair(GreedyRepair):
         """Initialize with regret parameter k."""
         self.k = k
         
-    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]]]:
+    def insert_customers(self, state: VRPData) -> tuple[VRPData,tuple[List[int]],tuple[List[int]],float]:
         """
         Calculate regret scores, sort customers (highest first), then insert.
         
@@ -142,16 +147,21 @@ class RegretkRepair(GreedyRepair):
         Returns:
             Updated state with all customers assigned
             
-        Raises:
-            Exception: If k exceeds available positions
         """
         regret_scores = {}
         for cust in state.unassigned_customers:
             _, route_id, index, candidate_cost_info = self.get_min_insertion_cost(state, cust)
             candidate_cost_info = sorted(candidate_cost_info, key=lambda x: x[0])
-            if self.k > len(candidate_cost_info):
-                raise Exception('k cannot be greater than number of available insertion positions')
-            regret_score = candidate_cost_info[self.k-1][0] - candidate_cost_info[0][0]
+            if len(candidate_cost_info) == 0:
+                # If no positions available, this is an error in problem setup
+                raise Exception('No feasible insertion positions found for customer')
+            elif len(candidate_cost_info) == 1:
+                # If only one position available, regret is 0
+                regret_score = 0
+            else:
+                # Use min(k, number of positions) to calculate regret
+                k_to_use = min(self.k, len(candidate_cost_info))
+                regret_score = candidate_cost_info[k_to_use-1][0] - candidate_cost_info[0][0]
             regret_scores[cust] = regret_score
             
         # Sort by regret (descending)

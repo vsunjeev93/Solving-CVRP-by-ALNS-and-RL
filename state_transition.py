@@ -5,7 +5,7 @@ from vrp_data import VRPData
 from torch_geometric.utils import index_to_mask, coalesce
 import torch
 from typing import List, Tuple
-def state_transition(graph: Data, action: List[int], num_customers_to_remove: int, destroy: bool = True) -> Tuple[Data, bool]:
+def state_transition(graph: Data, action: torch.Tensor, num_customers_to_remove: int, destroy: bool = True) -> Tuple[Data, bool]:
     """
     Apply destroy or repair operators to VRP instances based on current state.
     
@@ -42,79 +42,116 @@ def state_transition(graph: Data, action: List[int], num_customers_to_remove: in
     destroy_list=[RandomRemoval(), DemandRelatedRemoval(), GeographicRelatedRemoval(), RouteRelatedRemoval(), GreedyRemoval()]
     repair_list=[GreedyRepair(),SortedGreedyRepair(),RegretkRepair(2),RegretkRepair(3)]
     action_list=destroy_list+repair_list
+    new_costs=[]
+    new_states=[]
     if destroy:
-        new_states=[]
+        
+        # print(graph.state)
         for i,state in enumerate(graph.state):
             if action[i]>=len(destroy_list):
                 raise Exception('A destory operator has not been chosen')
             destroy_operator=action_list[action[i]]
-            new_state,new_edges,delete_edges=destroy_operator.action(state,num_customers_to_remove)
+            new_state,cost_change=destroy_operator.action(state,num_customers_to_remove)
+            
+            # new_costs.append(graph.cost[i]+cost_change)
             new_states.append(new_state)
-            graph_index=graph.graph_id_index[i]
-            graph=remove_edges(graph,delete_edges,graph_index)
-            graph=add_edges(graph,new_edges,graph_index)
-        graph.state=new_states
-        destroy=not destroy
+            # graph_index=graph.graph_id_index[i]
+            # graph=remove_edges(graph,delete_edges,graph_index)
+            # graph=add_edges(graph,new_edges,graph_index)
+        
     else:
-        new_states=[]
         for i,state in enumerate(graph.state):
             if action[i]<len(destroy_list):
                 raise Exception('A repair operator has not been chosen')
             repair_operator=action_list[action[i]]
-            new_state,new_edges,delete_edges=repair_operator.insert_customers(state)
+            # print(state.routes,state.unassigned_customers,'before op')
+            new_state,cost_change=repair_operator.insert_customers(state)
+            # new_costs.append(graph.cost[i]+cost_change)
             new_states.append(new_state)
-            graph_index=graph.graph_id_index[i]
-            graph=remove_edges(graph,delete_edges,graph_index)
-            graph=add_edges(graph,new_edges,graph_index)
-        graph.state=new_states
-        destroy=not destroy
+            # graph_index=graph.graph_id_index[i]
+            # graph=remove_edges(graph,delete_edges,graph_index)
+            # graph=add_edges(graph,new_edges,graph_index)
+        
+    edges=[]
+    graph.state=new_states
+    destroy=not destroy
+    new_costs=[]
+    x_new=graph.x.clone()
+    for i,new_state in enumerate(new_states):
+        new_cost=0
+        for route in new_state.routes:
+            for node_index,node in enumerate(route[:-1]):
+                if node!=0:
+                    x_new[node+graph.graph_id_index[i],0]=node_index
+                    x_new[node+graph.graph_id_index[i],1]=i
+                new_cost+=new_state.distance_matrix[node,route[node_index+1]]
+                edges.append(torch.tensor([graph.graph_id_index[i]+node,graph.graph_id_index[i]+route[node_index+1]]))
+                edges.append(torch.tensor([graph.graph_id_index[i]+route[node_index+1],graph.graph_id_index[i]+node]))
+                edges.append(torch.tensor([graph.center_node_index[i],graph.graph_id_index[i]+node]))
+                edges.append(torch.tensor([graph.graph_id_index[i]+node,graph.center_node_index[i]]))
+                # edges.append(torch.tensor([node+graph.graph_id_index[i],graph.center_node_index[i]]))
+        for node_index,node in enumerate(new_state.unassigned_customers):
+            edges.append(torch.tensor([graph.graph_id_index[i]+node,graph.center_node_index[i]]))
+            edges.append(torch.tensor([graph.center_node_index[i],graph.graph_id_index[i]+node]))
+            x_new[node+graph.graph_id_index[i],0]=-2
+            x_new[node+graph.graph_id_index[i],1]=-2
+            # edges.append(torch.tensor([node+graph.graph_id_index[i],graph.center_node_index[i]]))
+        new_costs.append(new_cost)
+    edge_index=torch.stack(edges)
+    graph.x=x_new
+    graph.edge_index=edge_index.t().contiguous()
+    # Use the same device as the input graph
+    device = graph.cost.device
+    graph.cost=torch.tensor(new_costs).to(device)
     return graph, destroy
-def remove_edges(graph: Data, delete_edges: List[List[int]], graph_index: int) -> Data:
-    """
-    Remove edges from the graph during state transition.
+# def remove_edges(graph: Data, delete_edges: List[List[int]], graph_index: int) -> Data:
+#     """
+#     Remove edges from the graph during state transition.
     
-    Args:
-        graph (Data): PyTorch Geometric Data object containing the graph.
-        delete_edges (List[List[int]]): List of edges to remove in format [sources, targets].
-        graph_index (int): Offset to add to node indices for batched graphs.
+#     Args:
+#         graph (Data): PyTorch Geometric Data object containing the graph.
+#         delete_edges (List[List[int]]): List of edges to remove in format [sources, targets].
+#         graph_index (int): Offset to add to node indices for batched graphs.
         
-    Returns:
-        Data: Graph with specified edges removed.
+#     Returns:
+#         Data: Graph with specified edges removed.
         
-    Note:
-        This function uses coalesce to efficiently handle edge removal by setting
-        weights and then filtering based on those weights.
-    """
-    sources_to_remove=[graph_index+node for node in delete_edges[0]]
-    targets_to_remove=[graph_index+node for node in delete_edges[1]]
-    edge_index_remove=torch.tensor([sources_to_remove,targets_to_remove])
-    all_edge_index=torch.cat([graph.edge_index,edge_index_remove],dim=1)
-    edge_weights=torch.cat([torch.zeros(graph.edge_index.size(1)),torch.ones(edge_index_remove.size(1))])
-    all_edge_index,edge_weights=coalesce(all_edge_index,edge_weights)
-    edge_index_after_removal=all_edge_index[:,edge_weights==0]
-    graph.edge_index=edge_index_after_removal
-    return graph
+#     Note:
+#         This function uses coalesce to efficiently handle edge removal by setting
+#         weights and then filtering based on those weights.
+#     """
+#     device = graph.cost.device
+#     sources_to_remove=[graph_index+node for node in delete_edges[0]]
+#     targets_to_remove=[graph_index+node for node in delete_edges[1]]
+#     edge_index_remove=torch.tensor([sources_to_remove,targets_to_remove]).to(device)
+#     all_edge_index=torch.cat([graph.edge_index,edge_index_remove],dim=1).to(device)
+#     edge_weights=torch.cat([torch.zeros(graph.edge_index.size(1)),torch.ones(edge_index_remove.size(1))]).to(device)
+#     all_edge_index,edge_weights=coalesce(all_edge_index,edge_weights)
+#     edge_index_after_removal=all_edge_index[:,edge_weights==0]
+#     graph.edge_index=edge_index_after_removal
+#     return graph
 
-def add_edges(graph: Data, new_edges: List[List[int]], graph_index: int) -> Data:
-    """
-    Add new edges to the graph during state transition.
+# def add_edges(graph: Data, new_edges: List[List[int]], graph_index: int) -> Data:
+#     """
+#     Add new edges to the graph during state transition.
     
-    Args:
-        graph (Data): PyTorch Geometric Data object containing the graph.
-        new_edges (List[List[int]]): List of edges to add in format [sources, targets].
-        graph_index (int): Offset to add to node indices for batched graphs.
+#     Args:
+#         graph (Data): PyTorch Geometric Data object containing the graph.
+#         new_edges (List[List[int]]): List of edges to add in format [sources, targets].
+#         graph_index (int): Offset to add to node indices for batched graphs.
         
-    Returns:
-        Data: Graph with new edges added.
-    """
-    #new edges
-    sources_to_add=[graph_index+node for node in new_edges[0]]
-    targets_to_add=[graph_index+node for node in new_edges[1]]
-    new_edges=torch.tensor([sources_to_add,targets_to_add])
+#     Returns:
+#         Data: Graph with new edges added.
+#     """
+#     device = graph.cost.device
+#     #new edges
+#     sources_to_add=[graph_index+node for node in new_edges[0]]
+#     targets_to_add=[graph_index+node for node in new_edges[1]]
+#     new_edges=torch.tensor([sources_to_add,targets_to_add]).to(device)
 
-    #get new set of edges
-    graph.edge_index=torch.cat([graph.edge_index,new_edges],dim=1)
-    return graph
+#     #get new set of edges
+#     graph.edge_index=torch.cat([graph.edge_index,new_edges],dim=1).to(device)
+#     return graph
 if __name__=='__main__':
     # Basic usage example of state transition in a destroy-repair cycle
     from graph_data import generate_graph_and_initial_solution

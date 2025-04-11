@@ -13,7 +13,7 @@ class Destroy:
     that can be repaired by repair operators. The removed customers are tracked
     in the VRPData state for later repair operations.
     """
-    def remove_customers(self, state: VRPData, customers_to_remove: List[int]) -> Tuple[VRPData, List[List[int]], List[List[int]]]:
+    def remove_customers(self, state: VRPData, customers_to_remove: List[int]) -> Tuple[VRPData, List[List[int]], List[List[int]],float]:
         """
         Removes specified customers from the given state's routes.
         
@@ -28,24 +28,21 @@ class Destroy:
                 - List[List[int]]: Deleted edges (source and target nodes)
         """
         new_routes = []
-        new_edges=[[],[]] #source and target edges to match pytorch geometric convention
-        deleted_edges=[[],[]]
+        cost_change=0
         for route in state.routes:
             new_route = []
             for node_index,node in enumerate(route):
                 if node in customers_to_remove:
                     if len(route) > 3: # if it is just depot-cust-node then there is no edge to add
-                        new_edges[0] = new_edges[0] + [route[node_index-1], route[node_index+1]]
-                        new_edges[1] = new_edges[1] + [route[node_index+1], route[node_index-1]]
-                    deleted_edges[0] = deleted_edges[0] + [node, route[node_index+1], node, route[node_index-1]]
-                    deleted_edges[1] = deleted_edges[1] + [route[node_index+1], node, route[node_index-1], node]
+                        cost_change+=state.distance_matrix[route[node_index+1],route[node_index-1]]
+                    cost_change-=state.distance_matrix[node,route[node_index+1]]+state.distance_matrix[node,route[node_index-1]]
                 else:
                     new_route.append(node)
             if len(new_route) > 2:  # Keep route if it has more than just depot-depot
                 new_routes.append(new_route)
         state.routes = new_routes
         state.unassigned_customers = customers_to_remove
-        return state, new_edges, deleted_edges
+        return state, cost_change
 
 class RandomRemoval(Destroy):
     """
@@ -53,7 +50,7 @@ class RandomRemoval(Destroy):
     Inherits from the base Destroy class. Updates the VRPData state with removed customers
     for tracking unassigned customers.
     """
-    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]]]:
+    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]], float]:
         """
         Randomly removes a specified number of customers from the current solution.
         
@@ -88,7 +85,7 @@ class DemandRelatedRemoval(Destroy):
     Selects a random customer and removes its nearest neighbors based on demand similarity.
     Updates the VRPData state with removed customers.
     """
-    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]]]:
+    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]],float]:
         """
         Removes customers with similar demands from the current solution.
         
@@ -121,7 +118,7 @@ class GeographicRelatedRemoval(Destroy):
     Selects a random customer and removes its nearest neighbors based on Euclidean distance.
     Updates the VRPData state with removed customers.
     """
-    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]]]:
+    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]],float]:
         """
         Removes geographically close customers from the current solution.
         
@@ -153,7 +150,7 @@ class RouteRelatedRemoval(Destroy):
     Selects a random customer and removes its nearest neighbors based on route position.
     Updates the VRPData state with removed customers.
     """
-    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]]]:
+    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]],float]:
         """
         Removes customers that are close in route sequence from the current solution.
         
@@ -188,7 +185,7 @@ class GreedyRemoval(Destroy):
     Removes customers whose removal would lead to the largest cost reduction.
     Updates the VRPData state with removed customers.
     """
-    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]]]:
+    def action(self, state: VRPData, num_customers_to_remove: int) -> Tuple[VRPData, List[List[int]], List[List[int]],float]:
         """
         Removes customers that would give the largest cost reduction when removed.
         

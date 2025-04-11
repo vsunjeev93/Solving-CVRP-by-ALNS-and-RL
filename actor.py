@@ -53,7 +53,7 @@ class actor(torch.nn.Module):
         if not greedy:
             sample = m.sample()
         else:
-            sample = m.sample()
+            sample = torch.argmax(x, dim=1)
         # log_prob=m.log_prob(sample)
         # entropy=torch.bmm(torch.nn.functional.log_softmax(x).unsqueeze(-1).permute(0,2,1),x.unsqueeze(-1))
         # print(m.log_prob(sample),'log_acton',x)

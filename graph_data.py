@@ -23,7 +23,7 @@ def generate_graph_and_initial_solution(customers, vehicle_capacity):
         Exception: If vehicle capacity is insufficient
     """
     points = torch.rand((customers+1, 2)) #including depot
-    demand = torch.randint(1,10,(customers,)).float()/vehicle_capacity  #(customers,1)
+    demand = torch.randint(1,10,(customers,)).float()  #(customers,1)
     if vehicle_capacity<torch.max(demand):
         raise Exception('vehicle capacity is less than demand of a some customers')
 
@@ -39,35 +39,43 @@ def generate_graph_and_initial_solution(customers, vehicle_capacity):
         else:
             is_cust=1
         features.append(torch.tensor([
-            is_cust, #depot=0, cust=1, center=-1
+            # is_cust, #depot=0, cust=1, center=-1
+            -1, # placeholder for  position in route node is in -1 for depot and center node
+            -1, # placeholder for route node is in -1 for depot and center node
             demand[i], #demand for the node
             points[i][0], #x coord
             points[i][1], # y coord
             distance[i], # distance between center node and cust/depot
             angle_center[i], #angle between center node and cust/depot
        ]))
-        edges.append(torch.tensor([i,customers+1]))# adding edge from customer/depot to center node
-    features.append(torch.tensor([-1,0,center[0], center[1],0,0]))
+        # edges.append(torch.tensor([i,customers+1]))# adding edge from customer/depot to center node
+        edges.append(torch.tensor([customers+1,i]))
+        edges.append(torch.tensor([i,customers+1]))
+    features.append(torch.tensor([-1,-1,0,center[0], center[1],0,0]))
     features = torch.stack(features)
     # get initial solution
-    routes=initial_solution(points,demand,vehicle_capacity)
+    routes, total_cost = initial_solution(points,demand,vehicle_capacity)
     vrp_state=VRPData(points=points.numpy(),vehicle_capacity=vehicle_capacity,node_demand=demand.numpy(),routes=routes)
     # add edges in routes:
-    for route in vrp_state.routes:
+    for i,route in enumerate(vrp_state.routes):
         for node_index,node in enumerate(route[:-1]):
+            if node!=0:
+                features[node,0]=node_index
+                features[node,1]=i
             edges.append(torch.tensor([node,route[node_index+1]]))
             edges.append(torch.tensor([route[node_index+1],node]))
     
     edge_index = torch.stack(edges)
     mask = index_to_mask(torch.tensor(range(1,customers)), size=customers + 2)#masks depot and center node
-        
+    # print(total_cost)
     graph = Data(
         x=features,
         edge_index=edge_index.t().contiguous(),
         center_node_index=torch.tensor([customers+1]),
         mask=mask,# masks depot and center node
         graph_id_index=torch.tensor([0]),
-        state=[vrp_state]
+        state=vrp_state,
+        cost=torch.tensor(total_cost)
     )
     return graph
 
@@ -85,9 +93,10 @@ def data_generator(n, vehicle_capacity, instances=10000, batch_size=12):
         DataLoader: Batched graph instances
     """
     graphs = []
-    torch.manual_seed(5)
+    # torch.manual_seed(5)
     for _ in range(instances):
-        graph = generate_graph_and_initial_solution(n,vehicle_capacity)
+        graph = generate_graph_and_initial_solution(n, vehicle_capacity)
+        # Ensure all tensors are on CPU - we don't need to do this as they're already on CPU
         graphs.append(graph)
     loader = DataLoader(graphs, batch_size=batch_size)
     return loader
@@ -102,7 +111,8 @@ def initial_solution(points, demand, vehicle_capacity):
         vehicle_capacity (float): Maximum capacity
         
     Returns:
-        List[List[int]]: Routes starting/ending at depot (0)
+        tuple: (routes, total_cost) where routes is a list of routes starting/ending at depot (0)
+               and total_cost is the sum of all route distances
     """
     n = len(points) - 1  # number of customers (excluding depot)
     unvisited_mask = torch.ones(n + 1, dtype=torch.bool)  # Track unvisited customers
@@ -111,6 +121,7 @@ def initial_solution(points, demand, vehicle_capacity):
     current_route = [0]  # start with depot (index 0)
     current_load = 0
     current_pos = 0  # depot position
+    total_cost = 0.0
     
     while unvisited_mask.any():
         # Calculate distances to all points at once
@@ -127,7 +138,9 @@ def initial_solution(points, demand, vehicle_capacity):
         nearest = torch.argmin(distances).item()
         
         if distances[nearest] == float('inf'):  # No feasible customer found
-            current_route.append(0)  # Return to depot
+            # Add return to depot distance
+            total_cost += torch.norm(points[current_pos] - points[0]).item()
+            current_route.append(0)
             routes.append(current_route)
             # Start a new route
             current_route = [0]
@@ -138,13 +151,17 @@ def initial_solution(points, demand, vehicle_capacity):
         # Add nearest customer to route
         current_route.append(nearest)
         current_load += demand[nearest].item()
+        # Add distance to total cost
+        total_cost += distances[nearest].item()
         current_pos = nearest
         unvisited_mask[nearest] = False
     
-    current_route.append(0)  # Return to depot for last route
+    # Add return to depot distance for last route
+    total_cost += torch.norm(points[current_pos] - points[0]).item()
+    current_route.append(0)
     routes.append(current_route)
     
-    return routes
+    return routes, total_cost
 
 if __name__=='__main__':
     graphs=data_generator(40,10,2,2)

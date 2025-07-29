@@ -12,11 +12,13 @@ import yaml # Add yaml import
 def compute_losses(rewards, log_actions, state_values):
     actor_losses = []
     critic_losses = []
-    cum_rewards=torch.cumsum(rewards,dim=-1)
+    # cum_rewards=torch.cumsum(torch.flip(rewards,dim=1),dim=-1)
+    rewards_to_go=0
     # print(cum_rewards,'cum_rewards')
-    for index, (log_action, state_value) in enumerate(zip(log_actions, state_values)):
+    # print(rewards)
+    for index, (reward,log_action, state_value) in enumerate(zip(rewards[::-1],log_actions[::-1], state_values[::-1])):
         # rewards_to_go = torch.stack(rewards[index:], dim=-1).sum(dim=-1)
-        rewards_to_go=cum_rewards[:,index]
+        rewards_to_go=reward+rewards_to_go
         # print(rewards_to_go.size(),cum_rewards.size(),state_value.size(),log_action.size())
         # assert 1==2
         # print(rewards_to_go,'reward')
@@ -90,7 +92,7 @@ def train(collect_stats=True, seed=42):
     lr=10**-5
     optimizer = torch.optim.Adam(list(actor_model.parameters()) + list(critic_model.parameters()), lr=lr)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2, gamma=0.9)
-    epochs=20
+    epochs=200
     
     # Problem parameters
     num_customers = 100
@@ -185,14 +187,15 @@ def train(collect_stats=True, seed=42):
                     reward=torch.maximum(best_cost-state.cost,torch.zeros(batch_size, device=device))
                     rewards.append(reward)
                     # print(reward.size())
-                    rewards=torch.stack(rewards,dim=-1)
+                    # rewards=torch.stack(rewards,dim=-1)
                     # print(best_cost.size(),state.cost.size(),rewards.size(),'mean rewards')
                     # assert 1==2
                     
                     # Log statistics - only if collecting stats
                     if collect_stats:
                         # Log reward
-                        reward_val = reward.mean().item()
+                        rewards_stacked=torch.stack(rewards,dim=-1)
+                        reward_val = rewards_stacked.mean().item()
                         batch_rewards.append(reward_val)
                         
                         # Log best cost
